@@ -1,0 +1,40 @@
+[
+  {
+    "arguments": [
+      "/usr/local/bin/clang++",
+      "-Wall",
+      "-Werror",
+      "-std=gnu++2b",
+      "-IX11",
+      "-Og",
+      "-fsanitize=unreachable",
+      "-fsanitize=undefined",
+      "-c",
+      "-o",
+      "src/main.o",
+      "src/main.cpp"
+    ],
+    "directory": "/home/joe/repos/fx",
+    "file": "/home/joe/repos/fx/src/main.cpp",
+    "output": "/home/joe/repos/fx/src/main.o"
+  },
+  {
+    "arguments": [
+      "/usr/local/bin/clang++",
+      "-Wall",
+      "-Werror",
+      "-std=gnu++2b",
+      "-IX11",
+      "-Og",
+      "-fsanitize=unreachable",
+      "-fsanitize=undefined",
+      "-c",
+      "-o",
+      "src/window_context.o",
+      "src/window_context.cpp"
+    ],
+    "directory": "/home/joe/repos/fx",
+    "file": "/home/joe/repos/fx/src/window_context.cpp",
+    "output": "/home/joe/repos/fx/src/window_context.o"
+  }
+]

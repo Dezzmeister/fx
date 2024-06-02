@@ -23,6 +23,65 @@ static unsigned long get_color(Display * dis, int screen, XColor * color_info, c
     return color_info->pixel;
 }
 
+static int str_cmp(const char * const a, size_t a_len, const char * const b, size_t b_len) {
+    size_t len = a_len <= b_len ? a_len : b_len;
+
+    for (int i = 0; i < len; i++) {
+        char a_char = a[i];
+        char b_char = b[i];
+
+        if (a_char < b_char) {
+            return -1;
+        } else if (a_char > b_char) {
+            return 1;
+        }
+    }
+
+    if (a_len < b_len) {
+        return -1;
+    } else if (a_len > b_len) {
+        return 1;
+    }
+
+    // This should never be possible for filenames in the same directory
+    return 0;
+}
+
+static int partition(path_segment * a, int lo, int hi) {
+    path_segment * pivot = a + lo;
+
+    int i = lo - 1;
+    int j = hi + 1;
+
+    while (1) {
+        do {
+            i++;
+        } while (str_cmp((a + i)->name, (a + i)->len, pivot->name, pivot->len) < 0);
+
+        do {
+            j--;
+        } while (str_cmp((a + j)->name, (a + j)->len, pivot->name, pivot->len) > 0);
+
+        if (i >= j) {
+            return j;
+        }
+
+        path_segment tmp = a[i];
+        a[i] = a[j];
+        a[j] = tmp;
+    }
+}
+
+// Quicksort with Hoare's partitioning scheme
+static void quicksort(path_segment * a, int lo, int hi) {
+    if (lo >= 0 && hi >= 0 && lo < hi) {
+        int p = partition(a, lo, hi);
+
+        quicksort(a, lo, p);
+        quicksort(a, p + 1, hi);
+    }
+}
+
 window_context::window_context(int x, int y, unsigned int width, unsigned int height, const char * const title) {
     unsigned long white;
 
@@ -50,6 +109,8 @@ window_context::window_context(int x, int y, unsigned int width, unsigned int he
     this->dir_color = get_color(this->dis, this->screen, &tmp, "yellow");
     this->debug_color = get_color(this->dis, this->screen, &tmp, "red");
     this->hover_color = get_color(this->dis, this->screen, &tmp, "gray78");
+    this->no_perm_color = get_color(this->dis, this->screen, &tmp, "red");
+    this->status_color = get_color(this->dis, this->screen, &tmp, "green");
 
     char * retval = getcwd(this->cwd, PATH_MAX + 1);
     check_error(retval, (char *) NULL);
@@ -71,6 +132,13 @@ window_context::window_context(int x, int y, unsigned int width, unsigned int he
     this->max_y = 4096;
     this->can_scroll = false;
     this->scrollrow = 0;
+    this->tmp_path[0] = '\0';
+    this->tmp_path_len = 0;
+    this->status[0] = '\0';
+    this->status_len = 0;
+
+    this->uid = getuid();
+    this->gid = getgid();
 }
 
 window_context::~window_context() {
@@ -90,17 +158,29 @@ int window_context::on_expose(XExposeEvent &event) {
 
     int y = 23;
 
-    for (int i = 0; i < MAX_CHILDREN; i++) {
+    int i;
+    for (i = this->scrollrow; i < MAX_CHILDREN; i++) {
         path_segment &path = this->children[i];
 
-        if (path.len == 0) {
+        if (path.len == 0 || y > (this->window_attrs.height - 10)) {
             break;
         }
 
-        if (this->mouse_y < y && this->mouse_y >= (y - ROW_HEIGHT)) {
+        const bool has_perm = this->has_permission(path);
+        const bool is_selected = this->mouse_y < y && this->mouse_y >= (y - ROW_HEIGHT);
+
+        if (! has_perm) {
+            XSetForeground(this->dis, this->gc, this->no_perm_color);
+            XFillRectangle(this->dis, this->win, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
+        }
+
+        if (is_selected) {
             XSetForeground(this->dis, this->gc, this->hover_color);
             XFillRectangle(this->dis, this->win, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
-            XSetForeground(this->dis, this->gc, this->black);
+        }
+
+        if (! has_perm || is_selected) {
+            XSetForeground(this->dis, this->gc, this->text_color);
         }
 
         XDrawString(this->dis, this->win, this->gc, 20, y, path.name, path.len);
@@ -116,12 +196,26 @@ int window_context::on_expose(XExposeEvent &event) {
             XSetForeground(this->dis, this->gc, this->text_color);
         }
 
-        this->draw_filetype(y, path.type);
+        this->draw_filetype(y, path.mode);
 
         y += ROW_HEIGHT;
     }
 
     this->max_y = y;
+
+    int screen_rows = (this->window_attrs.height - 20) / ROW_HEIGHT;
+    this->can_scroll = i >= screen_rows;
+    this->max_scrollrow = i - screen_rows + 2;
+
+    // Draw the statusline
+    XDrawLine(this->dis, this->win, this->gc, 0, (this->window_attrs.height - 10), this->window_attrs.width, (this->window_attrs.height - 10));
+
+    if (this->status_len != 0) {
+        XSetForeground(this->dis, this->gc, this->status_color);
+        XDrawString(this->dis, this->win, this->gc, 0, this->window_attrs.height, this->status, this->status_len);
+    }
+
+    XSetForeground(this->dis, this->gc, this->text_color);
 
     return NO_EXIT;
 }
@@ -136,16 +230,29 @@ int window_context::on_button_press(XButtonEvent &event) {
             }
 
             if (event.y >= (path.y_bot - 10) && event.y <= path.y_bot) {
-                if (path.type == DT_DIR) {
-                    this->navigate(path);
+                if (! this->has_permission(path)) {
+                    this->set_status("No permission");
+                } else {
+                    if (S_ISDIR(path.mode)) {
+                        this->navigate(path);
+                    }
+                    this->set_status("");
                 }
+
+                this->redraw();
             }
         }
     } else if (this->can_scroll && event.button == Button4) {
-        scrollrow--;
+        if (this->scrollrow > 0) {
+            this->scrollrow--;
+        }
+
         this->redraw();
     } else if (this->can_scroll && event.button == Button5) {
-        scrollrow++;
+        if (this->scrollrow < this->max_scrollrow) {
+            this->scrollrow++;
+        }
+
         this->redraw();
     }
 
@@ -177,7 +284,6 @@ int window_context::on_motion(XMotionEvent &event) {
 
     this->mouse_y = event.y;
 
-    // printf("curr_row: %d, next_row: %d\n", curr_row, next_row);
     if (this->mouse_y <= this->max_y && curr_row != next_row) {
         this->redraw();
     }
@@ -193,12 +299,23 @@ void window_context::set_debug_mode(bool enabled) {
 void window_context::read_child_dirs(int start_at) {
     int i = start_at;
     struct dirent * entry;
+    int retval;
 
     while (i < MAX_CHILDREN && (entry = readdir(this->dir)) != NULL) {
         memcpy(this->children[i].name, entry->d_name, 256);
 
         this->children[i].len = strlen(this->children[i].name);
-        this->children[i].type = entry->d_type;
+
+        memcpy(this->tmp_path, this->cwd, this->cwd_len + 1);
+        this->tmp_path_len = this->cwd_len;
+        this->path_join(this->tmp_path, &this->tmp_path_len, this->children[i]);
+
+        retval = stat(this->tmp_path, &this->tmp_stat);
+        check_error(retval, -1);
+
+        this->children[i].mode = this->tmp_stat.st_mode;
+        this->children[i].uid = this->tmp_stat.st_uid;
+        this->children[i].gid = this->tmp_stat.st_gid;
 
         i++;
     }
@@ -207,6 +324,8 @@ void window_context::read_child_dirs(int start_at) {
         // The entry with len = 0 marks the end
         this->children[i].len = 0;
     }
+
+    quicksort(this->children, 0, i - 1);
 }
 
 void window_context::redraw() {
@@ -216,20 +335,16 @@ void window_context::redraw() {
     this->on_expose(this->send_event.xexpose);
 }
 
-void window_context::draw_filetype(int y, unsigned char type) {
+void window_context::draw_filetype(int y, unsigned int mode) {
     const char * type_str;
     unsigned long type_color;
 
-    switch (type) {
-        case DT_DIR: {
-            type_str = "d";
-            type_color = this->dir_color;
-            break;
-        };
-        default: {
-            type_str = "f";
-            type_color = this->file_color;
-        };
+    if (S_ISDIR(mode)) {
+        type_str = "d";
+        type_color = this->dir_color;
+    } else {
+        type_str = "f";
+        type_color = this->file_color;
     }
 
     XSetForeground(this->dis, this->gc, type_color);
@@ -247,40 +362,44 @@ path_segment * window_context::get_selected_segment() {
     return &this->children[curr_row];
 }
 
-void window_context::navigate(path_segment &path) {
+void window_context::path_join(char * const wd, size_t * wd_len, path_segment &path) {
     if (path.len == 1 && path.name[0] == '.') {
         // Do nothing
         return;
-    } else if (this->cwd_len == 1 && cwd[0] == '/') {
+    } else if (*wd_len == 1 && wd[0] == '/') {
         if (path.len == 2 && path.name[0] == '.' && path.name[1] == '.') {
             // Can't go up from root
             return;
         }
 
         // Root - just append the next thing
-        memcpy(this->cwd + 1, path.name, path.len);
-        this->cwd_len = path.len + 1;
-        this->cwd[path.len + 1] = '\0';
+        memcpy(wd + 1, path.name, path.len);
+        *wd_len = path.len + 1;
+        wd[path.len + 1] = '\0';
     } else if (path.len == 2 && path.name[0] == '.' && path.name[1] == '.') {
         // Strip out last part of path
-        int slashpos = this->cwd_len;
+        int slashpos = *wd_len;
 
-        while (slashpos && (this->cwd[--slashpos] != '/'));
+        while (slashpos && (wd[--slashpos] != '/'));
 
         if (slashpos == 0) {
             // Last slash is root, so leave it in
-            this->cwd[1] = '\0';
-            this->cwd_len = 1;
+            wd[1] = '\0';
+            *wd_len = 1;
         } else {
-            this->cwd_len = slashpos;
-            this->cwd[slashpos] = '\0';
+            *wd_len = slashpos;
+            wd[slashpos] = '\0';
         }
     } else {
-        this->cwd[this->cwd_len] = '/';
-        memcpy(this->cwd + this->cwd_len + 1, path.name, path.len);
-        this->cwd_len += path.len + 1;
-        this->cwd[this->cwd_len] = '\0';
+        wd[*wd_len] = '/';
+        memcpy(wd + *wd_len + 1, path.name, path.len);
+        *wd_len += path.len + 1;
+        wd[*wd_len] = '\0';
     }
+}
+
+void window_context::navigate(path_segment &path) {
+    this->path_join(this->cwd, &this->cwd_len, path);
 
     if (this->dir) {
         int retval = closedir(this->dir);
@@ -291,5 +410,18 @@ void window_context::navigate(path_segment &path) {
     check_error(this->dir, (DIR *) NULL);
 
     this->read_child_dirs(0);
-    this->redraw();
+    this->scrollrow = 0;
+}
+
+bool window_context::has_permission(path_segment &path) {
+    if (S_ISDIR(path.mode)) {
+        return (S_IXOTH & path.mode) || ((S_IXUSR & path.mode) && this->uid == path.uid) || ((S_IXGRP & path.mode) && this->gid == path.gid);
+    }
+
+    return (S_IROTH & path.mode) || ((S_IRUSR & path.mode) && this->uid == path.uid) || ((S_IRGRP & path.mode) && this->gid == path.gid);
+}
+
+void window_context::set_status(const char * const text) {
+    this->status_len = strlen(text);
+    memcpy(this->status, text, this->status_len + 1);
 }

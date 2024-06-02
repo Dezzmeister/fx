@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <linux/limits.h>
+#include <sys/stat.h>
 #include <X11/Xlib.h>
 
 #define NO_EXIT             0
@@ -18,7 +19,9 @@ struct path_segment {
     char name[MAX_PATH_SEGMENT_SIZE];
     size_t len;
     int y_bot;
-    unsigned char type;
+    unsigned int mode;
+    unsigned int uid;
+    unsigned int gid;
 };
 
 class window_context {
@@ -34,6 +37,8 @@ class window_context {
         unsigned long dir_color;
         unsigned long debug_color;
         unsigned long hover_color;
+        unsigned long no_perm_color;
+        unsigned long status_color;
         XWindowAttributes window_attrs;
         // https://insanecoding.blogspot.com/2007/11/pathmax-simply-isnt.html
         // I am using PATH_MAX anyway. If you have a path longer than PATH_MAX, you have bigger problems
@@ -46,6 +51,7 @@ class window_context {
         int max_y;
         bool can_scroll;
         int scrollrow;
+        int max_scrollrow;
 
         window_context(int x, int y, unsigned int width, unsigned int height, const char * const title);
 
@@ -63,18 +69,35 @@ class window_context {
 
     private:
         XEvent send_event;
-
         bool debug_enabled;
+        struct stat tmp_stat;
+        char tmp_path[PATH_MAX + 1];
+        size_t tmp_path_len;
+        unsigned int uid;
+        unsigned int gid;
+        // 256 for message text + 256 max filename size in case I want to write
+        // filenames here
+        char status[512];
+        size_t status_len;
 
         void read_child_dirs(int start_at);
 
         void redraw();
 
-        void draw_filetype(int y, unsigned char type);
+        void draw_filetype(int y, unsigned int mode);
 
         path_segment * get_selected_segment();
 
+        void path_join(char * const wd, size_t * wd_len, path_segment &path);
+
         void navigate(path_segment &path);
+
+        // If `path` is a directory, returns true if the current user
+        // has execute permissions. Otherwise returns true if the current
+        // user has read permissions.
+        bool has_permission(path_segment &path);
+
+        void set_status(const char * const text);
 };
 
 #endif

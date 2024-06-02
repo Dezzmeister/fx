@@ -27,6 +27,20 @@ struct path_segment {
 class window_context {
     public:
         Display * dis;
+
+        window_context(int x, int y, unsigned int width, unsigned int height, const char * const title);
+
+        int on_expose(XExposeEvent &event);
+
+        int on_button_press(XButtonEvent &event);
+
+        int on_key_press(XKeyEvent &event);
+
+        int on_motion(XMotionEvent &event);
+
+        ~window_context();
+
+    private:
         int screen;
         Window win;
         GC gc;
@@ -52,23 +66,6 @@ class window_context {
         bool can_scroll;
         int scrollrow;
         int max_scrollrow;
-
-        window_context(int x, int y, unsigned int width, unsigned int height, const char * const title);
-
-        int on_expose(XExposeEvent &event);
-
-        int on_button_press(XButtonEvent &event);
-
-        int on_key_press(XKeyEvent &event);
-
-        int on_motion(XMotionEvent &event);
-
-        void set_debug_mode(bool enabled);
-
-        ~window_context();
-
-    private:
-        XEvent send_event;
         bool debug_enabled;
         struct stat tmp_stat;
         char tmp_path[PATH_MAX + 1];
@@ -79,6 +76,8 @@ class window_context {
         // filenames here
         char status[512];
         size_t status_len;
+        Pixmap back_buffer;
+        int max_area;
 
         void read_child_dirs(int start_at);
 
@@ -98,6 +97,8 @@ class window_context {
         bool has_permission(path_segment &path);
 
         void set_status(const char * const text);
+
+        void set_debug_mode(bool enabled);
 };
 
 #endif

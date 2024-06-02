@@ -97,9 +97,6 @@ window_context::window_context(int x, int y, unsigned int width, unsigned int he
 
     this->gc = XCreateGC(this->dis, this->win, 0, 0);
 
-    XSetBackground(this->dis, this->gc, white);
-    XSetForeground(this->dis, this->gc, this->black);
-
     XClearWindow(this->dis, this->win);
     XMapRaised(this->dis, this->win);
 
@@ -139,83 +136,49 @@ window_context::window_context(int x, int y, unsigned int width, unsigned int he
 
     this->uid = getuid();
     this->gid = getgid();
+
+    XGetWindowAttributes(this->dis, this->win, &this->window_attrs);
+    this->back_buffer = XCreatePixmap(this->dis, this->win, this->window_attrs.width, this->window_attrs.height, 24);
+    this->max_area = this->window_attrs.width * this->window_attrs.height;
 }
 
 window_context::~window_context() {
     int retval = closedir(this->dir);
     check_error(retval, -1);
 
+    XFreePixmap(this->dis, this->back_buffer);
     XFreeGC(this->dis, this->gc);
     XDestroyWindow(this->dis, this->win);
     XCloseDisplay(this->dis);
 }
 
 int window_context::on_expose(XExposeEvent &event) {
-    XClearWindow(this->dis, this->win);
-    XSetForeground(this->dis, this->gc, this->text_color);
-    XDrawString(this->dis, this->win, this->gc, 0, 10, this->cwd, this->cwd_len);
+    int old_w = this->window_attrs.width;
+    int old_h = this->window_attrs.height;
+
     XGetWindowAttributes(this->dis, this->win, &this->window_attrs);
 
-    int y = 23;
+    int new_w = this->window_attrs.width;
+    int new_h = this->window_attrs.height;
 
-    int i;
-    for (i = this->scrollrow; i < MAX_CHILDREN; i++) {
-        path_segment &path = this->children[i];
+    if (new_w > old_w || new_h > old_h) {
+        // Reallocate the pixmap
+        XFreePixmap(this->dis, this->back_buffer);
+        this->back_buffer = XCreatePixmap(this->dis, this->win, new_w, new_h, 24);
+        this->max_area = new_w * new_h;
+    } else {
+        // Shrink the pixmap only if the new size is a quarter of the max. This is only to save some
+        // memory - we don't actually care about whatever doesn't fit in the window
+        int new_area = new_w * new_h;
 
-        if (path.len == 0 || y > (this->window_attrs.height - 10)) {
-            break;
+        if (new_area * 4 <= this->max_area) {
+            this->max_area = new_area;
+            XFreePixmap(this->dis, this->back_buffer);
+            this->back_buffer = XCreatePixmap(this->dis, this->win, new_w, new_h, 24);
         }
-
-        const bool has_perm = this->has_permission(path);
-        const bool is_selected = this->mouse_y < y && this->mouse_y >= (y - ROW_HEIGHT);
-
-        if (! has_perm) {
-            XSetForeground(this->dis, this->gc, this->no_perm_color);
-            XFillRectangle(this->dis, this->win, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
-        }
-
-        if (is_selected) {
-            XSetForeground(this->dis, this->gc, this->hover_color);
-            XFillRectangle(this->dis, this->win, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
-        }
-
-        if (! has_perm || is_selected) {
-            XSetForeground(this->dis, this->gc, this->text_color);
-        }
-
-        XDrawString(this->dis, this->win, this->gc, 20, y, path.name, path.len);
-
-        path.y_bot = y;
-
-        if (this->debug_enabled) {
-            unsigned int w = this->window_attrs.width;
-            unsigned int h = ROW_HEIGHT;
-
-            XSetForeground(this->dis, this->gc, this->debug_color);
-            XDrawRectangle(this->dis, this->win, this->gc, 0, path.y_bot - ROW_HEIGHT, w, h);
-            XSetForeground(this->dis, this->gc, this->text_color);
-        }
-
-        this->draw_filetype(y, path.mode);
-
-        y += ROW_HEIGHT;
     }
 
-    this->max_y = y;
-
-    int screen_rows = (this->window_attrs.height - 20) / ROW_HEIGHT;
-    this->can_scroll = i >= screen_rows;
-    this->max_scrollrow = i - screen_rows + 2;
-
-    // Draw the statusline
-    XDrawLine(this->dis, this->win, this->gc, 0, (this->window_attrs.height - 10), this->window_attrs.width, (this->window_attrs.height - 10));
-
-    if (this->status_len != 0) {
-        XSetForeground(this->dis, this->gc, this->status_color);
-        XDrawString(this->dis, this->win, this->gc, 0, this->window_attrs.height, this->status, this->status_len);
-    }
-
-    XSetForeground(this->dis, this->gc, this->text_color);
+    this->redraw();
 
     return NO_EXIT;
 }
@@ -329,10 +292,72 @@ void window_context::read_child_dirs(int start_at) {
 }
 
 void window_context::redraw() {
-    XFlush(this->dis);
-    this->send_event.type = Expose;
-    // XSendEvent(this->dis, this->win, False, ExposureMask, &this->send_event);
-    this->on_expose(this->send_event.xexpose);
+    XSetForeground(this->dis, this->gc, this->black);
+    XFillRectangle(this->dis, this->back_buffer, this->gc, 0, 0, this->window_attrs.width, this->window_attrs.height);
+    XSetForeground(this->dis, this->gc, this->text_color);
+    XDrawString(this->dis, this->back_buffer, this->gc, 0, 10, this->cwd, this->cwd_len);
+
+    int y = 23;
+
+    int i;
+    for (i = this->scrollrow; i < MAX_CHILDREN; i++) {
+        path_segment &path = this->children[i];
+
+        if (path.len == 0 || y > (this->window_attrs.height - 10)) {
+            break;
+        }
+
+        const bool has_perm = this->has_permission(path);
+        const bool is_selected = this->mouse_y < y && this->mouse_y >= (y - ROW_HEIGHT);
+
+        if (! has_perm) {
+            XSetForeground(this->dis, this->gc, this->no_perm_color);
+            XFillRectangle(this->dis, this->back_buffer, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
+        }
+
+        if (is_selected) {
+            XSetForeground(this->dis, this->gc, this->hover_color);
+            XFillRectangle(this->dis, this->back_buffer, this->gc, 0, y - ROW_HEIGHT, this->window_attrs.width, ROW_HEIGHT);
+        }
+
+        if (! has_perm || is_selected) {
+            XSetForeground(this->dis, this->gc, this->text_color);
+        }
+
+        XDrawString(this->dis, this->back_buffer, this->gc, 20, y, path.name, path.len);
+
+        path.y_bot = y;
+
+        if (this->debug_enabled) {
+            unsigned int w = this->window_attrs.width;
+            unsigned int h = ROW_HEIGHT;
+
+            XSetForeground(this->dis, this->gc, this->debug_color);
+            XDrawRectangle(this->dis, this->back_buffer, this->gc, 0, path.y_bot - ROW_HEIGHT, w, h);
+            XSetForeground(this->dis, this->gc, this->text_color);
+        }
+
+        this->draw_filetype(y, path.mode);
+
+        y += ROW_HEIGHT;
+    }
+
+    this->max_y = y;
+
+    int screen_rows = (this->window_attrs.height - 20) / ROW_HEIGHT;
+    this->can_scroll = i >= screen_rows;
+    this->max_scrollrow = i - screen_rows + 2;
+
+    // Draw the statusline
+    XDrawLine(this->dis, this->back_buffer, this->gc, 0, (this->window_attrs.height - 10), this->window_attrs.width, (this->window_attrs.height - 10));
+
+    if (this->status_len != 0) {
+        XSetForeground(this->dis, this->gc, this->status_color);
+        XDrawString(this->dis, this->back_buffer, this->gc, 0, this->window_attrs.height, this->status, this->status_len);
+    }
+
+    XSetForeground(this->dis, this->gc, this->text_color);
+    XCopyArea(this->dis, this->back_buffer, this->win, this->gc, 0, 0, this->window_attrs.width, this->window_attrs.height, 0, 0);
 }
 
 void window_context::draw_filetype(int y, unsigned int mode) {
@@ -348,7 +373,7 @@ void window_context::draw_filetype(int y, unsigned int mode) {
     }
 
     XSetForeground(this->dis, this->gc, type_color);
-    XDrawString(this->dis, this->win, this->gc, 5, y, type_str, 1);
+    XDrawString(this->dis, this->back_buffer, this->gc, 5, y, type_str, 1);
     XSetForeground(this->dis, this->gc, this->text_color);
 }
 

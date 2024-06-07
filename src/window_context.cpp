@@ -235,6 +235,22 @@ int window_context::on_key_press(XKeyEvent &event) {
         XFree(keysyms);
 
         return USER_QUIT_EXIT_CODE;
+    } else if (key == 'c') {
+        path_segment * path = this->get_selected_segment();
+
+        if (! S_ISDIR(path->mode)) {
+            this->set_status("Can only navigate to a directory");
+        } else if (! this->has_permission(*path)) {
+            this->set_status("No permission");
+        } else {
+            this->path_join(this->cwd, &this->cwd_len, *path);
+            printf("cd %s\n", this->cwd);
+            XFree(keysyms);
+
+            return USER_CD_EXIT_CODE;
+        }
+
+        this->redraw();
     }
 
     XFree(keysyms);
@@ -257,6 +273,13 @@ int window_context::on_motion(XMotionEvent &event) {
 
 void window_context::set_debug_mode(bool enabled) {
     this->debug_enabled = enabled;
+
+    if (this->debug_enabled) {
+        this->set_status("Debug mode enabled");
+    } else {
+        this->set_status("Debug mode disabled");
+    }
+
     this->redraw();
 }
 

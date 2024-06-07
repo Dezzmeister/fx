@@ -5,6 +5,10 @@ TEST_SRC_DIR := test/src
 TEST_INC_DIR := test/include
 TEST_BINARY := test_bin
 
+ifeq (${INSTALL_DIR},)
+	INSTALL_DIR := /usr/local/bin
+endif
+
 CXX := clang++
 CXXFLAGS := -Wall -Werror -std=gnu++2b -IX11
 LDFLAGS := -lX11
@@ -34,7 +38,7 @@ release: ${OBJS}
 	${CXX} -o $@ $^ ${CXXFLAGS} ${LDFLAGS}
 
 fx: ${OBJS}
-	${CXX} -o $@ $^ ${CXXFLAGS} ${LDFLAGS}
+	${CXX} -o fx_bin $^ ${CXXFLAGS} ${LDFLAGS}
 
 memtest: ${OBJS}
 	${CXX} -o debug $^ ${CXXFLAGS} ${LDFLAGS} && valgrind --track-origins=yes --leak-check=full ./debug ${PATTERN} ; rm -f ./debug
@@ -42,8 +46,16 @@ memtest: ${OBJS}
 %.o: %.cpp ${HEADERS}
 	${CXX} -c -o $@ $< ${CXXFLAGS}
 
+install:
+	mv fx_bin ${INSTALL_DIR}
+	cp fx ${INSTALL_DIR}
+
+uninstall:
+	rm ${INSTALL_DIR}/fx_bin
+	rm ${INSTALL_DIR}/fx
+
 clean:
 	find . -name '*.o' -delete
 	rm -f debug
 	rm -f release
-	rm -f fx
+	rm -f fx_bin

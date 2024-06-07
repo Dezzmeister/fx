@@ -8,6 +8,7 @@
 
 #define NO_EXIT             0
 #define USER_QUIT_EXIT_CODE 1
+#define USER_CD_EXIT_CODE   2
 
 const size_t MAX_CHILDREN = 1024;
 // Must be >= 256

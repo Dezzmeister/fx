@@ -7,12 +7,19 @@ isn't very polished and it may look different on your machine.
 
 1. You need Xlib - if you are using a Debian-based distro you can get it with `apt-get install libx11-dev`
 
-2. Build a release binary with `make`. The binary will be named `fx`; install it wherever you want.
+2. Build a release binary with `make`. The binary will be called `fx_bin`.
+
+3. Install the binary and the wrapper script with `make install`. The tool will be installed to /usr/local/bin
+   by default, but you can change this by setting `INSTALL_DIR`.
 
 ## How to use it
 
 1. Have an X server running
 
-2. Start `fx` from anywhere, and a window will pop up with the contents of the current working directory.
-   You can scroll the list up or down, and click into directories to move into them. Press `q` to quit
-   and `d` to show some debug boxes.
+2. Start fx with `. fx`
+
+2. A window will pop up with the contents of the current working directory. You can scroll the list up
+   or down, and click into directories to move into them. There are some keys you can press as well:
+     - 'c' to close fx and `cd` to the selected directory. You need to start fx with `. fx` for this to work.
+     - 'q' to quit
+     - 'd' to show some debug boxes

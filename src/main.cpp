@@ -6,7 +6,8 @@
 
 const char * const EXIT_CODES[] = {
     "",
-    "Received quit command"
+    "Received quit command",
+    "This should never be printed!",
 };
 
 int main(int argc, char ** argv) {
@@ -34,7 +35,10 @@ int main(int argc, char ** argv) {
         }
 
         if (retval) {
-            printf("Exit: %s\n", EXIT_CODES[retval]);
+            if (retval != USER_CD_EXIT_CODE) {
+                printf("Exit: %s\n", EXIT_CODES[retval]);
+            }
+
             return 0;
         }
     }

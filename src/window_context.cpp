@@ -203,6 +203,7 @@ int window_context::on_button_press(XButtonEvent &event) {
                 }
 
                 this->redraw();
+                break;
             }
         }
     } else if (this->can_scroll && event.button == Button4) {

@@ -23,3 +23,8 @@ isn't very polished and it may look different on your machine.
      - 'c' to close fx and `cd` to the selected directory. You need to start fx with `. fx` for this to work.
      - 'q' to quit
      - 'd' to show some debug boxes
+
+## License
+
+fx is licensed under the GNU Affero Public License 3 or any later version at your choice. See
+[COPYING](https://github.com/Dezzmeister/fx/blob/master/COPYING) for details.

@@ -33,6 +33,30 @@ static void check_error(T val, T error_state) {
     }
 }
 
+template <typename T, size_t N>
+static constexpr size_t c_arr_size(const T(&)[N]) {
+    return N;
+}
+
+template <size_t N>
+void window_context::print_multiline_str(const char (&str)[N], int x, int y) {
+    size_t start = 0;
+    size_t end = 0;
+    int curr_y = y;
+
+    while (str[end] && end < N) {
+        if (str[end] == '\n') {
+            XDrawString(this->dis, this->back_buffer, this->gc, x, curr_y, str + start, end - start);
+            curr_y += ROW_HEIGHT;
+            start = end + 1;
+        }
+
+        end++;
+    }
+
+    XDrawString(this->dis, this->back_buffer, this->gc, x, curr_y, str + start, end - start);
+}
+
 static unsigned long get_color(Display * dis, int screen, XColor * color_info, const char * const color_name) {
     XParseColor(dis, DefaultColormap(dis, screen), color_name, color_info);
     XAllocColor(dis, DefaultColormap(dis, screen), color_info);
@@ -157,6 +181,8 @@ window_context::window_context(int x, int y, unsigned int width, unsigned int he
     XGetWindowAttributes(this->dis, this->win, &this->window_attrs);
     this->back_buffer = XCreatePixmap(this->dis, this->win, this->window_attrs.width, this->window_attrs.height, 24);
     this->max_area = this->window_attrs.width * this->window_attrs.height;
+
+    this->set_status("Press 'h' for help");
 }
 
 window_context::~window_context() {
@@ -201,7 +227,10 @@ int window_context::on_expose(XExposeEvent &event) {
 }
 
 int window_context::on_button_press(XButtonEvent &event) {
-    if (event.button == Button1) {
+    if (this->show_help) {
+        this->show_help = false;
+        this->redraw();
+    } else if (event.button == Button1) {
         for (int i = 0; i < MAX_CHILDREN; i++) {
             path_segment &path = this->children[i];
 
@@ -246,6 +275,11 @@ int window_context::on_key_press(XKeyEvent &event) {
     KeySym * keysyms = XGetKeyboardMapping(this->dis, event.keycode, 1, &num_keysyms);
     KeySym key = keysyms[0];
 
+    if (this->show_help) {
+        this->show_help = false;
+        this->redraw();
+    }
+
     if (key == 'd') {
         this->set_debug_mode(! this->debug_enabled);
     } else if (key == 'q') {
@@ -267,6 +301,9 @@ int window_context::on_key_press(XKeyEvent &event) {
             return USER_CD_EXIT_CODE;
         }
 
+        this->redraw();
+    } else if (key == 'h') {
+        this->show_help = true;
         this->redraw();
     }
 
@@ -332,7 +369,42 @@ void window_context::read_child_dirs(int start_at) {
     quicksort(this->children, 0, i - 1);
 }
 
+void window_context::draw_help() {
+    XSetForeground(this->dis, this->gc, this->black);
+    XFillRectangle(this->dis, this->back_buffer, this->gc, 0, 0, this->window_attrs.width, this->window_attrs.height);
+    XSetForeground(this->dis, this->gc, this->text_color);
+
+    const char about[] =
+R"(
+    Help
+
+    Press
+    'h' to show this help screen,
+    'c' to close fx and cd to the chosen directory, and
+    'q' to quit.
+
+
+    About
+    
+    fx is licensed under the GNU Affero Public License 3
+    or any later version at your choice. See
+    https://github.com/Dezzmeister/fx/blob/master/COPYING
+    for details. You can download the source code at
+    https://github.com/Dezzmeister/fx.
+
+
+    Press any key to close this help screen.
+)";
+    this->print_multiline_str(about, 0, 40);
+    XCopyArea(this->dis, this->back_buffer, this->win, this->gc, 0, 0, this->window_attrs.width, this->window_attrs.height, 0, 0);
+}
+
 void window_context::redraw() {
+    if (this->show_help) {
+        this->draw_help();
+        return;
+    }
+
     XSetForeground(this->dis, this->gc, this->black);
     XFillRectangle(this->dis, this->back_buffer, this->gc, 0, 0, this->window_attrs.width, this->window_attrs.height);
     XSetForeground(this->dis, this->gc, this->text_color);

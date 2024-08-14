@@ -96,10 +96,12 @@ class window_context {
         size_t status_len;
         Pixmap back_buffer;
         int max_area;
+        bool show_help;
 
         void read_child_dirs(int start_at);
 
         void redraw();
+        void draw_help();
 
         void draw_filetype(int y, unsigned int mode);
 
@@ -117,6 +119,9 @@ class window_context {
         void set_status(const char * const text);
 
         void set_debug_mode(bool enabled);
+
+        template <size_t N>
+        void print_multiline_str(const char (&str)[N], int x, int y);
 };
 
 #endif
